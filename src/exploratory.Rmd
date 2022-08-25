@@ -1,0 +1,116 @@
+---
+title: "Exploratory Analysis of Spaceship Titanic"
+author: "Monica Amezquita"
+date: "2022-07-29"
+output: pdf_document
+---
+
+## Load Relevant Libraries and Data
+
+```{r echo=FALSE}
+library(stringr)
+library(corrplot)
+library(GGally)
+library(plotly)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# set working directory to project directory (outside of SRC folder)
+split <- str_split(getwd(), "/", simplify = TRUE)
+wdir <- paste(split[-length(split)], collapse = "/")
+knitr::opts_knit$set(root.dir = wdir)
+```
+
+
+# Get Training Data with New Features
+
+```{r}
+# get training set
+train <- read.csv(sprintf("%s/data/imputed_feature_train.csv", getwd()), na.strings = "")
+```
+
+# Explore the Training Set
+
+```{r}
+#ggpairs(train[-c(5,8,16,17)])  # ignore features with many levels (i.e. names)
+```
+
+# Percentage of Transported
+
+```{r}
+proportions <- table(train$Transported)/length(train$Transported)
+percentages <- proportions*100
+
+```
+
+# Explore Expenditure vs. Transported and Expenditure vs. Crysleep colored by Transported
+
+```{r}
+ggplot(train, aes(x = Expenditure,fill = Transported)) + 
+  geom_histogram() + 
+  facet_wrap(vars(Transported))
+
+
+ggplot(train[!train$CryoSleep,], aes(x = CryoSleep,y = Expenditure, fill = Transported)) + 
+  geom_boxplot() + 
+  ylim(c(0,4000))
+```
+
+# Explore Count of Individuals in each Deck colored by Transported
+
+```{r}
+ggplot(train, aes(x = DeckNum, fill = Transported)) + 
+  geom_bar() + 
+  facet_wrap(vars(Transported))
+```
+
+
+# Explore Count of "Side" colored by Transported
+```{r}
+ggplot(train, aes(x = DeckNum, fill = Transported)) + 
+  geom_bar() + 
+  facet_wrap(vars(Transported))
+```
+
+# Explore Histogran of Age colored by IsSoloTraveler
+```{r}
+ggplot(train, aes(x = Age, fill = IsSoloTraveler)) + 
+  geom_histogram(binwidth = 1) + 
+  facet_wrap(vars(Transported))
+```
+
+# Explore Histogram of Age colored by Transported
+```{r}
+ggplot(train, aes(x = Age, fill = Transported)) + 
+  geom_histogram() +
+  facet_wrap(vars(Transported))
+```
+
+```{r}
+ggplot(train, aes(x = Transported, fill = IsSoloTraveler)) + 
+  geom_histogram() +
+  facet_wrap(vars(IsSoloTraveler))
+```
+
+```{r}
+ggplot(train, aes(x = IsSoloChild, fill = Transported)) + 
+  geom_histogram() +
+  facet_wrap(vars(Transported))
+```
+
+```{r}
+ggplot(train, aes(x = Deck, fill = CryoSleep)) + 
+  geom_bar() + 
+  facet_wrap(vars(Transported)) + 
+  facet_wrap(vars(CryoSleep))
+
+
+ggplot(train[!train$CryoSleep,], aes(x = CryoSleep,y = Expenditure, fill = Transported)) + 
+  geom_boxplot() + 
+  ylim(c(0,4000))
+```
+
+```{r}
+transported_bycabin_cryosleep <- sqldf("Select deck, count(deck) as count_deck from train where transported = 1 and cryosleep = true group by deck")
+```

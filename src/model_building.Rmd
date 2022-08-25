@@ -1,0 +1,622 @@
+---
+title: "Model Building"
+author: "Monica Amezquita; Alejandro Hernandez; Hugo Marquez"
+date: "2022-08-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# set working directory to project directory (outside of SRC folder)
+split <- str_split(getwd(), "/", simplify = TRUE)
+wdir <- paste(split[-length(split)], collapse = "/")
+knitr::opts_knit$set(root.dir = wdir)
+```
+
+```{r setup, include=FALSE}
+library(stringr)
+library(mice)
+library(dplyr)
+library(caret)
+library(yardstick)
+```
+
+# Get Training Data with New Features
+
+```{r}
+# get training set
+train <- read.csv(sprintf("%s/data/imputed_feature_train.csv", getwd()), na.strings = "")
+validation <- read.csv(sprintf("%s/data/imputed_feature_validation.csv", getwd()),na.strings = "")
+test <- read.csv(sprintf("%s/data/imputed_feature_test.csv", getwd()), na.strings = "") 
+```
+
+# Model Building
+
+# Data Pre-Processing
+
+### Split training and validation set
+
+```{r}
+
+space_titanic_train <- train
+space_titanic_valid <- validation
+space_titanic_test <- test
+
+cat("Training set size: ", nrow(space_titanic_train))
+cat("\nValidation set size: ", nrow(space_titanic_valid))
+```
+
+### Binary Classification
+
+```{r}
+
+#Adding levels for Training Dataset
+space_titanic_train$Transported <- factor(space_titanic_train$Transported)
+levels(space_titanic_train$Transported) <- c("No", "Yes")
+
+
+#Adding levels for Validation Dataset
+space_titanic_valid$Transported <- factor(space_titanic_valid$Transported)
+levels(space_titanic_valid$Transported) <- c("No", "Yes")
+```
+
+## K-Nearest Neighbors
+
+```{r}
+control <- trainControl(method="cv",number=10)
+
+tr_control <- trainControl(method="cv",number=10, classProbs = TRUE)
+
+
+fit_knn <- caret::train(Transported ~  HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group,
+                 method = "knn",
+                 trControl = control,
+                 preProcess = c("center","scale"),
+                 data = space_titanic_train)
+
+# add predictions to training data frame
+space_titanic_train <- space_titanic_train %>%
+  add_predictions(fit_knn, var = "knn_class") %>%
+  mutate(knn_prob = predict(fit_knn, newdata = ., type="prob")$Yes)
+
+# add predictions to validation data frame
+space_titanic_valid <- space_titanic_valid %>%
+  add_predictions(fit_knn, var = "knn_class") %>%
+  mutate(knn_prob = predict(fit_knn, newdata = ., type="prob")$Yes)
+
+(fit_knn$results)
+```
+
+```{r}
+## Sensitivity and Specificity Metrics
+metrics <- metric_set(accuracy, sens, spec, ppv, npv)
+
+space_titanic_valid %>% 
+  metrics(estimate = Transported, truth = knn_class)
+```
+
+## Confusion Matrix
+
+```{r}
+space_titanic_valid %>% 
+  conf_mat(Transported, knn_class)  
+```
+
+## ROC Curve and AUC
+
+```{r}
+# Train ROC Plot 
+space_titanic_train %>% 
+  roc_curve(truth = Transported,
+            estimate = knn_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Training Dataset Using KNN")
+
+# Test ROC Plot 
+space_titanic_valid %>% 
+  roc_curve(truth = Transported,
+            estimate = knn_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Validation Dataset Using KNN")
+```
+
+## Least Squares Estimate 
+
+```{r}
+fit_lr <- caret::train(Transported ~  HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group,
+                method = "glm",
+                trControl = control,
+                data = space_titanic_train)
+
+# add predictions to training data frame
+space_titanic_train <- space_titanic_train %>%
+  add_predictions(fit_lr, var = "lr_class") %>%
+  mutate(lr_prob = predict(fit_lr, newdata = ., type="prob")$Yes)
+
+# add predictions to validation data frame
+space_titanic_valid <- space_titanic_valid %>%
+  add_predictions(fit_lr, var = "lr_class") %>%
+  mutate(lr_prob = predict(fit_lr, newdata = ., type="prob")$Yes)
+
+(fit_lr$results)
+
+coef(fit_lr$finalModel)
+```
+
+### Sensitivity and Specificity Metrics
+
+```{r}
+metrics <- metric_set(accuracy, sens, spec, ppv, npv)
+
+space_titanic_valid %>% 
+  metrics(estimate = Transported, truth = lr_class)
+```
+
+### Confusion Matrix
+
+```{r}
+space_titanic_valid %>% 
+  conf_mat(Transported, lr_class)  
+```
+
+### ROC Curve and AUC
+
+```{r}
+#Train ROC 
+space_titanic_train %>% 
+  roc_curve(truth = Transported,
+            estimate = lr_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Training Dataset Using Least Squares")
+
+#Test ROC 
+space_titanic_valid %>% 
+  roc_curve(truth = Transported,
+            estimate = lr_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Validation Dataset Using Least Squares")
+```
+
+
+## Lasso and Ridge Classification
+
+```{r}
+
+tr_control <- trainControl(method="cv", number = 5, classProbs=TRUE)
+
+lasso <- caret::train(Transported ~ HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group,
+             data = space_titanic_train,
+             method = 'glmnet', 
+             tuneGrid = expand.grid(alpha = 1, lambda = 1),
+             trControl = tr_control 
+)
+
+lambda_grid = 10^(seq(-3,1,by=0.1))
+
+ridge <- caret::train(Transported ~ HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group,
+             data = space_titanic_train,
+             method = 'glmnet', 
+             tuneGrid = expand.grid(alpha = 0, lambda = lambda_grid),
+             trControl = tr_control
+)
+
+space_titanic_train <- space_titanic_train %>%
+  spread_predictions(lasso,ridge)
+
+space_titanic_valid <- space_titanic_valid %>%
+  spread_predictions(lasso,ridge)
+```
+## Look at Model Coefficients, Predictions, and Metrics
+
+```{r}
+coef(lasso$finalModel, lasso$finalModel$lambdaOpt)
+```
+
+```{r}
+coef(ridge$finalModel, ridge$finalModel$lambdaOpt)
+```
+
+```{r}
+#Train Metrics
+space_titanic_train %>% metrics(truth = Transported, estimate = lasso)
+
+space_titanic_train %>% metrics(truth = Transported, estimate = ridge)
+
+# Validation Metrics
+space_titanic_valid %>% metrics(truth = Transported, estimate = lasso)
+
+space_titanic_valid %>% metrics(truth = Transported, estimate = ridge)
+```
+
+## Logistic Regression
+
+```{r}
+train_log <- caret::train(Transported ~ HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group, 
+                   method = "glm",
+                   data=space_titanic_train)
+
+# training set
+space_titanic_train <- space_titanic_train %>%
+  add_predictions(train_log, var="log_pred") %>% # class predictions
+  mutate(log_prob = predict(train_log, newdata = ., type="prob")$Yes) 
+
+
+# test set
+space_titanic_valid <- space_titanic_valid %>%
+  add_predictions(train_log, var="log_pred") %>% # class predictions
+  mutate(log_prob = predict(train_log, newdata = ., type="prob")$Yes) 
+```
+
+### Sensitivity and Specificity Metrics
+
+```{r}
+
+metrics <- metric_set(accuracy, sens, spec, ppv, npv)
+
+space_titanic_valid %>% 
+  metrics(estimate = Transported, truth = log_pred)
+```
+
+### Confusion Matrix
+
+```{r}
+space_titanic_valid %>% 
+  conf_mat(Transported, log_pred)  
+```
+
+### ROC Curve and AUC
+
+```{r}
+#Train Dataset
+space_titanic_train %>% 
+  roc_curve(truth = Transported,
+            estimate = log_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Training Dataset Using Logistic Regression")
+
+#Validation Dataset
+space_titanic_valid %>% 
+  roc_curve(truth = Transported,
+            estimate = log_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Validation Dataset Using Logistic Regression")
+```
+
+## Support Vector Machine
+
+### Linear Decision Boundary
+
+```{r}
+train_svm_lin <- caret::train(Transported ~ HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group,
+                       method = "svmLinear", 
+                       trControl = tr_control,  
+                       data = space_titanic_train,
+                       preProcess = c("center","scale"),  # data should be preprocessed for SVM
+                       tuneGrid = expand.grid(C = seq(0.01, 2, length=20))  # tuning parameters go here
+                   )
+
+# training set
+space_titanic_train <- space_titanic_train %>%
+  add_predictions(train_svm_lin, var="svm_lin_pred") %>% # class predictions
+  mutate(svm_lin_prob = predict(train_svm_lin, newdata = ., type="prob")$Yes) 
+
+# test set
+space_titanic_valid <- space_titanic_valid %>%
+  add_predictions(train_svm_lin, var="svm_lin_pred") %>% # class predictions
+  mutate(svm_lin_prob = predict(train_svm_lin, newdata = ., type="prob")$Yes) 
+```
+
+### Sensitivity and Specificity Metrics
+
+```{r}
+metrics <- metric_set(accuracy, sens, spec, ppv, npv)
+
+space_titanic_valid %>% 
+  metrics(estimate = Transported, truth = svm_lin_pred)
+```
+
+### Confusion Matrix
+
+```{r}
+space_titanic_valid %>% 
+  conf_mat(Transported, svm_lin_pred)  
+```
+
+### ROC Curve and AUC
+
+```{r}
+#Train ROC
+space_titanic_train %>% 
+  roc_curve(truth = Transported,
+            estimate = svm_lin_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Training Dataset Using Linear SVM")
+
+#Validation ROC
+space_titanic_valid %>% 
+  roc_curve(truth = Transported,
+            estimate = svm_lin_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Validation Dataset Using Linear SVM")
+```
+
+### Polynomial Decision Boundary
+
+```{r}
+train_svm_poly <- caret::train(Transported ~ HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group,
+                        method = "svmPoly",
+                        trControl = tr_control,
+                        data = space_titanic_train,
+                        preProcess = c("center","scale"),
+                        tuneGrid = expand.grid(scale = seq(0.01,2, length=5),
+                                                C = seq(0.01, 2, length=5),
+                                                degree = 2))
+
+# training set
+space_titanic_train <- space_titanic_train %>%
+  add_predictions(train_svm_poly, var="svm_poly_pred") %>% # class predictions
+  mutate(svm_poly_prob = predict(train_svm_poly, newdata = ., type="prob")$Yes) 
+
+# test set
+space_titanic_valid <- space_titanic_valid %>%
+  add_predictions(train_svm_poly, var="svm_poly_pred") %>% # class predictions
+  mutate(svm_poly_prob = predict(train_svm_poly, newdata = ., type="prob")$Yes) 
+
+
+plot(train_svm_poly)
+```
+
+### Sensitivity and Specificity Metrics
+
+```{r}
+
+metrics <- metric_set(accuracy, sens, spec, ppv, npv)
+
+space_titanic_valid %>% 
+  metrics(estimate = Transported, truth = svm_poly_pred)
+```
+
+### Confusion Matrix
+
+```{r}
+space_titanic_valid %>% 
+  conf_mat(Transported, svm_poly_pred)  
+```
+
+### ROC Curve and AUC
+
+```{r}
+
+#Train ROC
+space_titanic_train %>% 
+  roc_curve(truth = Transported,
+            estimate = svm_poly_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Training Dataset Using SVM Poly")
+
+#Validation ROC
+
+space_titanic_valid %>% 
+  roc_curve(truth = Transported,
+            estimate = svm_poly_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4)+ 
+  ggtitle("ROC Plot for Validation Dataset Using SVM Poly")
+```
+
+
+### Amorphous Decision Boundaries (RBF Kernel)
+
+```{r}
+train_svm_rbf <- train(Transported ~ HomePlanet + CryoSleep + DeckNum  + Side + Destination + Age + Expenditure + people_in_group,
+                        method = "svmRadial",
+                        trControl = tr_control,
+                        data = space_titanic_train,
+                        preProcess = c("center","scale"),
+                        tuneGrid = expand.grid(sigma = seq(0.01,2, length=5),
+                                                C = seq(0.01, 2, length=5)))
+# training set
+space_titanic_train <- space_titanic_train %>%
+  add_predictions(train_svm_rbf, var="svm_rbf_pred") %>% # class predictions
+  mutate(svm_rbf_prob = predict(train_svm_rbf, newdata = ., type="prob")$Yes) 
+
+# test set
+space_titanic_valid <- space_titanic_valid %>%
+  add_predictions(train_svm_rbf, var="svm_rbf_pred") %>% # class predictions
+  mutate(svm_rbf_prob = predict(train_svm_rbf, newdata = ., type="prob")$Yes) 
+```
+
+
+### Sensitivity and Specificity Metrics
+
+```{r}
+
+metrics <- metric_set(accuracy, sens, spec, ppv, npv)
+
+space_titanic_valid %>% 
+  metrics(estimate = Transported, truth = svm_rbf_pred)
+```
+
+### Confusion Matrix
+
+```{r}
+space_titanic_valid %>% 
+  conf_mat(Transported, svm_rbf_pred)  
+```
+
+### ROC Curve and AUC
+
+```{r}
+
+#Train ROC
+space_titanic_train %>% 
+  roc_curve(truth = Transported,
+            estimate = svm_rbf_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) + 
+  ggtitle("ROC Plot for Training Dataset Using SVM RBF")
+
+#Test ROC
+space_titanic_valid %>% 
+  roc_curve(truth = Transported,
+            estimate = svm_rbf_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4)+ 
+  ggtitle("ROC Plot for Validation Dataset Using SVM RBF")
+```
+
+
+## Fully-Connected Neural Network
+
+```{r}
+nn15 <- caret::train(Transported ~ GroupId ,
+              method = "mlp",
+              preProc = c("center", "scale", "nzv"),
+              linOut = TRUE, # if you want regression 
+              trControl = tr_control,
+              learnFunc = "Rprop", # robust propogation
+              maxit = 500, # for long it will run for fitting 
+              hiddenActFunc = "Act_ReLU",
+              tuneGrid = expand.grid(
+                size = c(15) # 5 nodes in hidden layer
+              ),
+              data = space_titanic_train
+              )
+
+# training set
+space_titanic_train <- space_titanic_train %>%
+  add_predictions(nn15, var="nn_pred") %>% # class predictions
+  mutate(nn_prob = predict(nn15, newdata = ., type="prob")$Yes) 
+
+# test set
+space_titanic_valid <- space_titanic_valid %>%
+  add_predictions(nn15, var="nn_pred") %>% # class predictions
+  mutate(nn_prob = predict(nn15, newdata = ., type="prob")$Yes) 
+```
+
+### Sensitivity and Specificity Metrics
+
+```{r}
+metrics <- metric_set(accuracy, sens, spec, ppv, npv)
+
+space_titanic_valid %>% 
+  metrics(estimate = Transported, truth = nn_pred)
+```
+
+### Confusion Matrix
+
+```{r}
+space_titanic_valid %>% 
+  conf_mat(Transported, nn_pred)  
+```
+
+### ROC Curve and AUC
+
+```{r}
+space_titanic_valid %>% 
+  roc_curve(truth = Transported,
+            estimate = nn_prob,
+            event_level = "second") %>%
+  ggplot(aes(x = 1 - specificity,
+             y = sensitivity)) +
+  geom_line() +
+  geom_abline(slope = 1, intercept = 0, size = 0.4)
+```
+
+
+# ROC Curves
+
+```{r}
+space_titanic_train %>%
+  pivot_longer(
+    cols = c("knn_prob", "log_prob",
+             "lr_prob","svm_lin_prob",
+             "svm_poly_prob","svm_rbf_prob","nn_prob"),
+    names_to = "model",
+    values_to = "prob"
+  ) %>%
+  group_by(model) %>%
+  roc_curve(truth = Transported,
+            estimate = prob,
+            event_level = "second") %>%
+  ggplot(aes(
+    x = 1 - specificity,
+    y = sensitivity,
+    color = model
+  )) +
+  geom_line() +
+  geom_abline(slope = 1,
+              intercept = 0,
+              size = 0.4) +
+  ggtitle("Train Set ROC Curves")
+```
+
+```{r}
+space_titanic_valid %>%
+  pivot_longer(
+    cols = c("knn_prob", "log_prob",
+             "lr_prob","svm_lin_prob",
+             "svm_poly_prob","svm_rbf_prob","nn_prob"),
+    names_to = "model",
+    values_to = "prob"
+  ) %>%
+  group_by(model) %>%
+  roc_curve(truth = Transported,
+            estimate = prob,
+            event_level = "second") %>%
+  ggplot(aes(
+    x = 1 - specificity,
+    y = sensitivity,
+    color = model
+  )) +
+  geom_line() +
+  geom_abline(slope = 1,
+              intercept = 0,
+              size = 0.4) +i
+  ggtitle("Test Set ROC Curves")
+```
